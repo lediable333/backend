@@ -1,0 +1,34 @@
+groups:
+  - name: spin-alerts
+    rules:
+      - alert: HighSpinFailureRate
+        expr: |
+          (
+            increase(spins_failure_total[5m])
+            /
+            clamp_min(increase(spins_total[5m]), 1)
+          ) > 0.10
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'High spin failure rate (>{{ $value | humanize }} over last 5m)'
+          description: 'Failure ratio (failures/attempts) > 10% for the last 5 minutes.'
+
+      - alert: LowSpinTraffic
+        expr: increase(spins_total[15m]) < 5
+        for: 10m
+        labels:
+          severity: info
+        annotations:
+          summary: 'Low spin traffic'
+          description: 'Less than 5 spins in 15 minutes.'
+
+      - alert: BackendHigh5xxRate
+        expr: increase(http_requests_total{job="backend",status=~"5.."}[5m]) > 5
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'Backend encountering many 5xx responses'
+          description: 'More than 5 server errors (5xx) in the last 5 minutes.'
