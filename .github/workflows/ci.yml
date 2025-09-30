@@ -1,17 +1,96 @@
+# .github/workflows/ci.yml
 name: CI
+
 on:
-  push: { branches: [main] }
-  pull_request: { branches: [main] }
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
 jobs:
-  node:
+  build-and-test:
     runs-on: ubuntu-latest
+    env:
+      NODE_OPTIONS: --max-old-space-size=2048
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version-file: '.nvmrc'
+          node-version: 18
           cache: 'npm'
-      - run: npm ci
-      - run: npm run -s build || echo "no build"
-      - run: npm run -s lint || echo "no lint"
-      - run: npm test -- --ci --reporters=default --passWithNoTests || echo "no tests"
+
+      - name: Install dependencies
+        run: |
+          npm ci
+
+      - name: "Run unit tests (pass if none)"
+        run: |
+          npm test -- --passWithNoTests
+
+      - name: "RNG property test (small sample)"
+        run: |
+          node scripts/rng_property_test.js 5000
+
+      - name: "Typecheck / build"
+        run: |
+          npm run build
+
+      - name: "Lint (temporary: relax no-explicit-any in CI)"
+        # NOTE: temporarily disabling the @typescript-eslint/no-explicit-any rule in CI
+        run: |
+          npx eslint "src/**/*.ts" --rule "@typescript-eslint/no-explicit-any:0" --max-warnings=0
+
+  smoke-and-idempotency:
+    name: "smoke + idempotency"
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    env:
+      # DEV_BASE_URL, DEV_API_TOKEN and DEV_SESSION_ID must be set in repo secrets
+      DEV_BASE_URL: ${{ secrets.DEV_BASE_URL }}
+      DEV_API_TOKEN: ${{ secrets.DEV_API_TOKEN }}
+      DEV_SESSION_ID: ${{ secrets.DEV_SESSION_ID }}
+      K6_VUS: 2
+      K6_DURATION: 10s
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Install dependencies
+        run: |
+          npm ci
+
+      - name: "Validate required DEV env secrets"
+        run: |
+          missing=
+          if [ -z "$DEV_BASE_URL" ]; then missing="DEV_BASE_URL"; fi
+          if [ -z "$DEV_API_TOKEN" ]; then missing="$missing DEV_API_TOKEN"; fi
+          if [ -z "$DEV_SESSION_ID" ]; then missing="$missing DEV_SESSION_ID"; fi
+          if [ -n "$missing" ]; then
+            echo "::error::Missing required secrets/env: $missing"
+            echo "Please add these secrets to the repository (Settings → Secrets → Actions)."
+            exit 1
+          fi
+          echo "All required DEV_* secrets are present."
+
+      - name: "Run idempotency test against DEV"
+        run: |
+          node ./scripts/idempotency_test.js
+        # This script will POST twice with the same clientSpinId and ensure idempotency works.
+        # It should exit non-zero if the test fails.
+
+      - name: "Run k6 smoke (containerized) and evaluate summary"
+        run: |
+          # run k6 via Docker so Actions doesn't need k6 preinstalled
+          docker run --rm -v $PWD:/src -w /src -e DEV_BASE_URL="$DEV_BASE_URL" -e DEV_API_TOKEN="$DEV_API_TOKEN" -e DEV_SESSION_ID="$DEV_SESSION_ID" -e K6_VUS="$K6_VUS" -e K6_DURATION="$K6_DURATION" loadimpact/k6 run /src/k6/smoke.js --summary-export=smoke-summary.json
+          echo "Smoke summary written to smoke-summary.json"
+          python3 -c "import json,sys; j=json.load(open('smoke-summary.json')); rate=j.get('metrics',{}).get('http_req_failed',{}).get('rate',0); print('http_req_failed rate:', rate); (sys.exit(1) if rate>=0.10 else print('OK: smoke http_req_failed < 0.10'))"
