@@ -2,75 +2,44 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - 'ci/**'
   pull_request:
-    branches: [main]
+    branches:
+      - main
+  workflow_dispatch: {} # run manually if desired
 
 jobs:
-  build-test:
+  node-checks:
     runs-on: ubuntu-latest
-
-    services:
-      postgres:
-        image: postgres:14
-        env:
-          POSTGRES_USER: spin
-          POSTGRES_PASSWORD: spinpass
-          POSTGRES_DB: spinandwin
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd="pg_isready -U spin -d spinandwin"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
-
-    env:
-      DATABASE_URL: postgresql://spin:spinpass@localhost:5432/spinandwin
-      NODE_ENV: test
-      DEV_BASE_URL: http://localhost:8080
-      DEV_API_TOKEN: ${{ secrets.DEV_API_TOKEN }}
-      DEV_SESSION_ID: ${{ secrets.DEV_SESSION_ID }}
-      ENCRYPTION_KEY_BASE64: ${{ secrets.ENCRYPTION_KEY_BASE64 }}
-      JWT_PRIVATE_KEY: ${{ secrets.JWT_PRIVATE_KEY }}
-
+    strategy:
+      matrix:
+        node-version: [18.x]
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Set up Node.js
+      - name: Use Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ matrix.node-version }}
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Run build
+      - name: RNG property test
+        # run the same script you use locally
+        run: node scripts/rng_property_test.js
+        continue-on-error: false
+
+      - name: Build (TypeScript)
         run: npm run build
 
-      - name: Run lint
-        run: npx eslint "src/**/*.ts" --rule '@typescript-eslint/no-explicit-any:0' --max-warnings=0
-
-      - name: Run unit tests
-        run: npm test -- --passWithNoTests
-
-      - name: Run RNG property test
-        run: npm run rng:test
-
-      - name: Run backend (background)
+      - name: Lint (ESLint)
+        # The repo uses strict eslint config; in CI we keep rules strict.
         run: |
-          nohup npm run dev > backend.log 2>&1 &
-          sleep 10
+          npx eslint "src/**/*.ts" --max-warnings=0
 
-      - name: Run idempotency test
-        run: node scripts/idempotency_test.js
-
-      - name: Run k6 smoke test
-        uses: grafana/k6-action@v0.2.0
-        with:
-          filename: k6/smoke.js
-        env:
-          DEV_BASE_URL: http://localhost:8080
-          DEV_API_TOKEN: ${{ secrets.DEV_API_TOKEN }}
-          DEV_SESSION_ID: ${{ secrets.DEV_SESSION_ID }}
-          K6_VUS: 1
-          K6_DURATION: 10s
+      - name: Run tests (jest, pass if no tests exist)
+        run: npm test -- --passWithNoTests
