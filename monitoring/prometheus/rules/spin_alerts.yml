@@ -1,0 +1,33 @@
+# monitoring/prometheus/rules/spin_alerts.yml
+groups:
+  - name: spin-alerts
+    rules:
+      - alert: HighSpinFailureRate
+        expr: |
+          increase(spins_total[5m]) > 5
+          and
+          (increase(spins_failure_total[5m]) / increase(spins_total[5m])) > 0.10
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: High spin failure rate
+          description: 'More than 10% of spins failed over the last 5m and total spins > 5.'
+
+      - alert: HighSpinRate
+        expr: increase(spins_total[1m]) > 100
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Spike in spin attempts
+          description: 'More than 100 spins were attempted in the last 1 minute.'
+
+      - alert: BackendDown
+        expr: up{job="backend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Backend down or unreachable
+          description: 'Prometheus cannot reach the backend metrics endpoint (job=backend).'

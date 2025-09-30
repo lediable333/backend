@@ -1,17 +1,45 @@
 name: CI
+
 on:
-  push: { branches: [main] }
-  pull_request: { branches: [main] }
+  push:
+    branches:
+      - main
+      - 'ci/**'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch: {} # run manually if desired
+
 jobs:
-  node:
+  node-checks:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18.x]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
         with:
-          node-version-file: '.nvmrc'
-          cache: 'npm'
-      - run: npm ci
-      - run: npm run -s build || echo "no build"
-      - run: npm run -s lint || echo "no lint"
-      - run: npm test -- --ci --reporters=default --passWithNoTests || echo "no tests"
+          node-version: ${{ matrix.node-version }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: RNG property test
+        # run the same script you use locally
+        run: node scripts/rng_property_test.js
+        continue-on-error: false
+
+      - name: Build (TypeScript)
+        run: npm run build
+
+      - name: Lint (ESLint)
+        # The repo uses strict eslint config; in CI we keep rules strict.
+        run: |
+          npx eslint "src/**/*.ts" --max-warnings=0
+
+      - name: Run tests (jest, pass if no tests exist)
+        run: npm test -- --passWithNoTests
