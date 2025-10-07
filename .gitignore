@@ -5,3 +5,9 @@ dist
 .DS_Store
 .vscode
 coverage
+
+# local secrets
+jwt_private_key.pem
+
+# local CI service account key
+gcp-secret-reader-key.json
