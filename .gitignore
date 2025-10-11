@@ -1,4 +1,13 @@
 node_modules
+dist
 .env
+.env.local
+.DS_Store
+.vscode
 coverage
-.dist
+
+# local secrets
+jwt_private_key.pem
+
+# local CI service account key
+gcp-secret-reader-key.json
